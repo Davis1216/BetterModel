@@ -1,11 +1,15 @@
 import com.vanniktech.maven.publish.JavaLibrary
 import com.vanniktech.maven.publish.JavadocJar
-import com.vanniktech.maven.publish.SonatypeHost
+import kotlin.io.encoding.Base64
 
 plugins {
-    id("com.vanniktech.maven.publish") version "0.30.0"
+    alias(libs.plugins.bukkitConvention)
+    id("com.vanniktech.maven.publish") version "0.34.0"
     signing
 }
+
+val artifactBaseId = rootProject.name.lowercase()
+val artifactVersion = project.version.toString().substringBeforeLast('-')
 
 java {
     withSourcesJar()
@@ -13,28 +17,37 @@ java {
 }
 
 signing {
-    useGpgCmd()
+    val key = System.getenv("SIGNING_KEY")?.let {
+        Base64.decode(it.toByteArray(Charsets.UTF_8)).toString(Charsets.UTF_8)
+    }
+    val password = System.getenv("SIGNING_PASSWORD")
+    if (!key.isNullOrEmpty() && !password.isNullOrEmpty()) {
+        useInMemoryPgpKeys(
+            key,
+            password
+        )
+    } else useGpgCmd()
 }
 
 dependencies {
-    compileOnly("org.projectlombok:lombok:1.18.36")
-    annotationProcessor("org.projectlombok:lombok:1.18.36")
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
 
-    testCompileOnly("org.projectlombok:lombok:1.18.36")
-    testAnnotationProcessor("org.projectlombok:lombok:1.18.36")
+    testCompileOnly(libs.lombok)
+    testAnnotationProcessor(libs.lombok)
 }
 
 mavenPublishing  {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
-    coordinates("io.github.toxicity188", rootProject.name, project.version as String)
+    coordinates("io.github.toxicity188", artifactBaseId, artifactVersion)
     configure(JavaLibrary(
         javadocJar = JavadocJar.None(),
         sourcesJar = true,
     ))
     pom {
-        name = rootProject.name
-        description = "Modern lightweight Minecraft model implementation for Bukkit, Folia"
+        name = artifactBaseId
+        description = "Lightweight BlockBench model engine for Bukkit"
         inceptionYear = "2024"
         url = "https://github.com/toxicity188/BetterModel/"
         licenses {
@@ -54,6 +67,19 @@ mavenPublishing  {
             url = "https://github.com/toxicity188/BetterModel/"
             connection = "scm:git:git://github.com/toxicity188/BetterModel.git"
             developerConnection = "scm:git:ssh://git@github.com/toxicity188/BetterModel.git"
+        }
+    }
+}
+
+publishing {
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/toxicity188/$artifactBaseId")
+            credentials {
+                username = "toxicity188"
+                password = System.getenv("PACKAGES_API_TOKEN")
+            }
         }
     }
 }

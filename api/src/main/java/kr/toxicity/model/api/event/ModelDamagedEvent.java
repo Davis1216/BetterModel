@@ -6,12 +6,19 @@ import lombok.Setter;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.entity.EntityEvent;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * A damage event of hit-box entity
+ */
 @Getter
 @Setter
-public class ModelDamagedEvent extends EntityEvent implements Cancellable {
+public final class ModelDamagedEvent extends EntityEvent implements Cancellable {
 
+    /**
+     * Handler list
+     */
     public static final HandlerList HANDLER_LIST = new HandlerList();
 
     private final @NotNull HitBox hitBox;
@@ -20,6 +27,13 @@ public class ModelDamagedEvent extends EntityEvent implements Cancellable {
     private float damage;
     private boolean cancelled;
 
+    /**
+     * Creates damage event
+     * @param hitBox hit-box
+     * @param source source
+     * @param damage damage amount
+     */
+    @ApiStatus.Internal
     public ModelDamagedEvent(@NotNull HitBox hitBox, @NotNull ModelDamageSource source, float damage) {
         super(hitBox.source());
         this.hitBox = hitBox;
@@ -33,6 +47,11 @@ public class ModelDamagedEvent extends EntityEvent implements Cancellable {
         return HANDLER_LIST;
     }
 
+    /**
+     * Gets a handler list
+     * @return handler list
+     */
+    @SuppressWarnings("unused") //This method is necessary for event API.
     public static @NotNull HandlerList getHandlerList() {
         return HANDLER_LIST;
     }

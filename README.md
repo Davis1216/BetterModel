@@ -1,87 +1,66 @@
-<div align="center">  
+## ⚡Lightweight BlockBench model engine for Bukkit
+![Maven Central Version](https://img.shields.io/maven-central/v/io.github.toxicity188/bettermodel?style=flat-square&logo=sonatype)
+[![CodeFactor](https://www.codefactor.io/repository/github/toxicity188/bettermodel/badge?style=flat-square)](https://www.codefactor.io/repository/github/toxicity188/bettermodel)
+[![Total line](https://tokei.rs/b1/github/toxicity188/BetterModel?category=code&style=flat-square)](https://github.com/toxicity188/BetterModel)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=flat-square&logo=discord&logoColor=white)](https://discord.com/invite/rePyFESDbk)
+[![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/toxicity188/BetterModel?style=flat-square&logo=github)](https://github.com/toxicity188/BetterModel/issues)
+[![bStats Servers](https://img.shields.io/bstats/servers/24237?style=flat-square&logo=minecraft&label=bStats&color=0%2C150%2C136%2C0)](https://bstats.org/plugin/bukkit/BetterModel/24237)
 
-![0](https://github.com/user-attachments/assets/4cb52a01-b938-42f4-ade6-83b33ce53320)
+* * *
+![](https://github.com/user-attachments/assets/5a6c1a8c-6fe2-4a67-a10e-e63e40825d35)
+![](https://github.com/user-attachments/assets/ff515577-6a72-48ba-9943-81f00dddb375)
+* * *
 
-Welcome to BetterModel!
+This plugin implements the **fully server-side 3D model** by using an item-display packet.
 
-[SpigotMC](https://www.spigotmc.org/resources/121561/) | [GitHub](https://github.com/toxicity188/BetterModel) | [Modrinth](https://modrinth.com/plugin/bettermodel) | [Hangar](https://hangar.papermc.io/toxicity188/BetterModel)
+- Importing Generic BlockBench model `.bbmodel`
+- Auto-generating resource pack
+- Playing animation
+- Syncing with base entity
+- Custom hit box
+- Supports 12-limb player animation
 
-![Maven Central Version](https://img.shields.io/maven-central/v/io.github.toxicity188/BetterModel?style=for-the-badge)
-[![GitHub Release](https://img.shields.io/github/v/release/toxicity188/BetterModel?display_name=release&style=for-the-badge&logo=kotlin)](https://github.com/toxicity188/BetterModel/releases/latest)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/rePyFESDbk)
-[![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/toxicity188/BetterModel?style=for-the-badge&logo=github)](https://github.com/toxicity188/BetterModel/issues)
-[![bStats Servers](https://img.shields.io/bstats/servers/24237?style=for-the-badge&logo=minecraft&label=bStats&color=0%2C150%2C136%2C0)](https://bstats.org/plugin/bukkit/BetterModel/24237)
+## 🔧Build info
+#### Library
+- [Kotlin stdlib](https://github.com/JetBrains/kotlin): modern functional programming
+- [semver4j](https://github.com/vdurmont/semver4j): semver parser
+- [CommandAPI](https://github.com/CommandAPI/CommandAPI): command
+- [adventure](https://github.com/KyoriPowered/adventure): component
+- [stable player display](https://github.com/bradleyq/stable_player_display): player animation
+- [expiringmap](https://github.com/jhalterman/expiringmap): concurrent map cache
+- [DynamicUV](https://github.com/toxicity188/DynamicUV): player model-uv
+- [molang-compiler](https://github.com/Ocelot5836/molang-compiler): compiling and evaluating molang expression
 
-</div>
+#### Build
+`./gradlew build`: Builds all jars  
+`./gradlew shadowJar`: Builds plugin jar  
+`./gradlew javadocJar`: Builds javadoc jar
 
-### Modern lightweight Minecraft model implementation for Bukkit, Folia
-This plugin implements server-side model by using packet-based item display.
+> [!NOTE]\
+> It requires Java 21
 
-- Importing .bbmodel
-- Resource pack auto-generation
-- Multiple hit-box
-
-### Why I created BetterModel even though ModelEngine already exists?
-The main reason I created it is:
-- To reduce traffic - MEG uses too many packet, making significant network issue.
-- To provide faster update - MEG's update is too slow.
-- To provide more flexible API - MEG is a closed-source plugin and API is very limited.
-
-### Summary
-![1](https://github.com/user-attachments/assets/142136b7-f508-457e-8d69-ba93b8ddb567)  
-This plugin, of course, implements generic block bench model with animation.  
-![2](https://github.com/user-attachments/assets/e6d899e4-a3b0-4ee9-a62d-664e10b06709)  
-This plugin can track entity's movement and head rotation.
-
-
-### Network optimization
-![3](https://github.com/user-attachments/assets/6c421f33-682e-4674-a5d2-13310e5dbbfe)  
-This plugin can optimize network by **sight-trace**. It won't send packets when the player's not looking.  
-
-### Multiple hit-box
-![4](https://github.com/user-attachments/assets/dc311327-1212-4889-a6c8-dd71cc8f2c8b)  
-![5](https://github.com/user-attachments/assets/0fc3250d-ef4f-4e64-9cc2-c143a474d046)  
-This plugin provides multiple hit-box both client and server. (tracking animation rotation)
-
-### MythicMobs support (experimental)
-![6](https://github.com/user-attachments/assets/542f80ea-e3a7-4ea1-9875-181c77229739)  
-![7](https://github.com/user-attachments/assets/13e95fab-bb3d-40f3-b205-76751d3007cf)  
-Like MEG, This plugin implements simple MythicMobs support.
-```
-model
-state
-defaultstate
-partvisibility
-```
-
-### Version
-- Spigot, Paper or a fork (e.g. Folia)
-- Java 21
-- Minecraft 1.19.4-1.21.4
-
-### Dependency
-No
-
-### Command
-/bettermodel reload - Reloads this plugin.  
-/bettermodel spawn <model> - Summons this model to husk.  
-/bettermodel limb <true/false> - Shows/Hides player limb.  
-/bettermodel play <model> <animation> - Plays player animation.  
-
-### Permission
-bettermodel - Accesses to command.
-
-### Build
-./gradlew build
-
-### API
-We are using maven central.
+## API
+We are using Maven Central and GitHub Packages.  
+You can see an API examples in [here](https://github.com/toxicity188/BetterModel/wiki/API-example). 
+#### Release
 ```kotlin
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    compileOnly("io.github.toxicity188:BetterModel:VERSION")
+    compileOnly("io.github.toxicity188:bettermodel:VERSION")
 }
 ```
+#### Snapshot
+```kotlin
+repositories {
+    maven("https://maven.pkg.github.com/toxicity188/BetterModel")
+}
+
+dependencies {
+    compileOnly("io.github.toxicity188:bettermodel:VERSION-SNAPSHOT")
+}
+```
+* * *
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/toxicity188)

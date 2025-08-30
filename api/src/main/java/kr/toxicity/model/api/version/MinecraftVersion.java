@@ -12,17 +12,21 @@ import java.util.Comparator;
  */
 public record MinecraftVersion(int first, int second, int third) implements Comparable<MinecraftVersion> {
     /**
-     * Comparator
+     * 1.21.8
      */
-    private static final Comparator<MinecraftVersion> COMPARATOR = Comparator.comparing(MinecraftVersion::first)
-            .thenComparing(MinecraftVersion::second)
-            .thenComparing(MinecraftVersion::third);
-
-    @Override
-    public int compareTo(@NotNull MinecraftVersion o) {
-        return COMPARATOR.compare(this, o);
-    }
-
+    public static final MinecraftVersion V1_21_8 = new MinecraftVersion(1, 21, 8);
+    /**
+     * 1.21.7
+     */
+    public static final MinecraftVersion V1_21_7 = new MinecraftVersion(1, 21, 7);
+    /**
+     * 1.21.6
+     */
+    public static final MinecraftVersion V1_21_6 = new MinecraftVersion(1, 21, 6);
+    /**
+     * 1.21.5
+     */
+    public static final MinecraftVersion V1_21_5 = new MinecraftVersion(1, 21, 5);
     /**
      * 1.21.4
      */
@@ -51,41 +55,24 @@ public record MinecraftVersion(int first, int second, int third) implements Comp
      * 1.20.5
      */
     public static final MinecraftVersion V1_20_5 = new MinecraftVersion(1, 20, 5);
+
     /**
-     * 1.20.4
+     * Comparator
      */
-    public static final MinecraftVersion V1_20_4 = new MinecraftVersion(1, 20, 4);
-    /**
-     * 1.20.3
-     */
-    public static final MinecraftVersion V1_20_3 = new MinecraftVersion(1, 20, 3);
-    /**
-     * 1.20.2
-     */
-    public static final MinecraftVersion V1_20_2 = new MinecraftVersion(1, 20, 2);
-    /**
-     * 1.20.1
-     */
-    public static final MinecraftVersion V1_20_1 = new MinecraftVersion(1, 20, 1);
-    /**
-     * 1.20
-     */
-    public static final MinecraftVersion V1_20 = new MinecraftVersion(1, 20, 0);
-    /**
-     * 1.19.4
-     */
-    public static final MinecraftVersion V1_19_4 = new MinecraftVersion(1, 19, 4);
+    private static final Comparator<MinecraftVersion> COMPARATOR = Comparator.comparing(MinecraftVersion::first)
+            .thenComparing(MinecraftVersion::second)
+            .thenComparing(MinecraftVersion::third);
 
     /**
      * Parses version from string
-     * @param version version like "1.21.4"
+     * @param version version like "1.21.8"
      */
     public MinecraftVersion(@NotNull String version) {
         this(version.split("\\."));
     }
     /**
-     * Parses version from string array
-     * @param version version array like ["1", "21", "4]
+     * Parses version from a string array
+     * @param version version array like ["1", "21", "8"]
      */
     public MinecraftVersion(@NotNull String[] version) {
         this(
@@ -95,6 +82,37 @@ public record MinecraftVersion(int first, int second, int third) implements Comp
         );
     }
 
+    /**
+     * Checks this version is greater or equals than another.
+     * @param other other
+     * @return greater or not
+     */
+    public boolean isGreaterOrEquals(@NotNull MinecraftVersion other) {
+        return compareTo(other) >= 0;
+    }
+
+    /**
+     * Checks this version should be use modern resource.
+     * @return use modern resource
+     */
+    public boolean useModernResource() {
+        return isGreaterOrEquals(V1_21_4);
+    }
+
+    /**
+     * Checks this version should be use item model namespace.
+     * @return use item model namespace.
+     */
+    public boolean useItemModelName() {
+        return isGreaterOrEquals(V1_21_2);
+    }
+
+    @Override
+    public int compareTo(@NotNull MinecraftVersion o) {
+        return COMPARATOR.compare(this, o);
+    }
+
+    @NotNull
     @Override
     public String toString() {
         return first + "." + second + "." + third;

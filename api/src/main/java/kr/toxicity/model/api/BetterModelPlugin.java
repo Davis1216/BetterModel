@@ -1,11 +1,18 @@
 package kr.toxicity.model.api;
 
+import com.vdurmont.semver4j.Semver;
 import kr.toxicity.model.api.manager.*;
 import kr.toxicity.model.api.nms.NMS;
+import kr.toxicity.model.api.pack.PackResult;
+import kr.toxicity.model.api.pack.PackZipper;
 import kr.toxicity.model.api.scheduler.ModelScheduler;
 import kr.toxicity.model.api.version.MinecraftVersion;
+import org.bukkit.command.CommandSender;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import java.io.InputStream;
 import java.util.function.Consumer;
 
 /**
@@ -14,19 +21,56 @@ import java.util.function.Consumer;
  * @see org.bukkit.plugin.java.JavaPlugin
  * @see BetterModel
  */
-public interface BetterModelPlugin {
+public interface BetterModelPlugin extends Plugin {
 
     /**
      * Reloads this plugin.
      * @return reload result
      */
-    @NotNull ReloadResult reload();
+    default @NotNull ReloadResult reload() {
+        return reload(ReloadInfo.DEFAULT);
+    }
+
+    /**
+     * Reloads this plugin.
+     * @param sender sender
+     * @return reload result
+     */
+    default @NotNull ReloadResult reload(@NotNull CommandSender sender) {
+        return reload(ReloadInfo.builder().sender(sender).build());
+    }
+
+    /**
+     * Reloads this plugin.
+     * @param info info
+     * @return reload result
+     */
+    @NotNull ReloadResult reload(@NotNull ReloadInfo info);
+
+
+    /**
+     * Check running BetterModel is snapshot.
+     * @return is snapshot
+     */
+    boolean isSnapshot();
+
+    /**
+     * Gets BetterModel's config
+     * @return config
+     */
+    @NotNull BetterModelConfig config();
 
     /**
      * Gets running server's minecraft version.
      * @return minecraft version
      */
     @NotNull MinecraftVersion version();
+
+    /**
+     * Gets plugin semver.
+     * @return semver
+     */
+    @NotNull Semver semver();
 
     /**
      * Gets minecraft version volatile code.
@@ -55,15 +99,20 @@ public interface BetterModelPlugin {
      */
     @NotNull CommandManager commandManager();
     /**
+     * Gets script manager.
+     * @return script manager
+     */
+    @NotNull ScriptManager scriptManager();
+    /**
      * Gets compatibility manager.
      * @return compatibility manager
      */
     @NotNull CompatibilityManager compatibilityManager();
     /**
-     * Gets config manager.
-     * @return config manager
+     * Gets skin manager.
+     * @return skin manager
      */
-    @NotNull ConfigManager configManager();
+    @NotNull SkinManager skinManager();
     /**
      * Gets plugin scheduler.
      * @return scheduler
@@ -72,12 +121,32 @@ public interface BetterModelPlugin {
 
     /**
      * Adds event handler on reload start.
+     * @param consumer task
      */
-    void addReloadStartHandler(@NotNull Runnable runnable);
+    void addReloadStartHandler(@NotNull Consumer<PackZipper> consumer);
     /**
-     * Adds event handler on reload end.
+     * Adds event handler on the reload end.
+     * @param consumer result consumer
      */
     void addReloadEndHandler(@NotNull Consumer<ReloadResult> consumer);
+
+    /**
+     * Gets logger
+     * @return logger
+     */
+    @NotNull BetterModelLogger logger();
+
+    /**
+     * Gets evaluator
+     * @return evaluator
+     */
+    @NotNull BetterModelEvaluator evaluator();
+
+    /**
+     * Gets plugin resource from a path
+     * @param path path
+     */
+    @Nullable InputStream getResource(@NotNull String path);
 
     /**
      * A result of reload.
@@ -86,15 +155,36 @@ public interface BetterModelPlugin {
 
         /**
          * Reload success.
-         * @param time total time
+         * @param assetsTime assets reloading time
+         * @param packResult pack result
          */
-        record Success(long time) implements ReloadResult {
+        record Success(long assetsTime, @NotNull PackResult packResult) implements ReloadResult {
+
+            /**
+             * Gets packing time
+             * @return packing time
+             */
+            public long packingTime() {
+                return packResult().time();
+            }
+
+            /**
+             * Gets total reload time
+             * @return total reload time
+             */
+            public long totalTime() {
+                return assetsTime + packingTime();
+            }
         }
 
         /**
          * Still on reload.
          */
-        record OnReload() implements ReloadResult {
+        enum OnReload implements ReloadResult {
+            /**
+             * Singleton instance
+             */
+            INSTANCE
         }
 
         /**

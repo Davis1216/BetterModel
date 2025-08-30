@@ -4,23 +4,23 @@ import io.lumine.mythic.api.config.MythicLineConfig
 import io.lumine.mythic.api.skills.INoTargetSkill
 import io.lumine.mythic.api.skills.SkillMetadata
 import io.lumine.mythic.api.skills.SkillResult
-import io.lumine.mythic.bukkit.MythicBukkit
-import io.lumine.mythic.core.skills.SkillMechanic
-import kr.toxicity.model.api.tracker.EntityTracker
+import kr.toxicity.model.api.tracker.TrackerUpdateAction
+import kr.toxicity.model.compatibility.mythicmobs.*
 
-class PartVisibilityMechanic(mlc: MythicLineConfig) : SkillMechanic(MythicBukkit.inst().skillManager, null, "[BetterModel]", mlc), INoTargetSkill {
+class PartVisibilityMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
 
-    private val p = mlc.getString(arrayOf("part", "p"))!!
-    private val v = mlc.getBoolean(arrayOf("value", "v"), true)
-
-    init {
-        isAsyncSafe = false
-    }
+    private val model = mlc.modelPlaceholder
+    private val predicate = mlc.bonePredicateNullable
+    private val v = mlc.toPlaceholderBoolean(arrayOf("visibility", "visible", "v"), true)
 
     override fun cast(p0: SkillMetadata): SkillResult {
-        return EntityTracker.tracker(p0.caster.entity.bukkitEntity)?.let {
-            it.togglePart({ r -> r.name == p }, v)
+        val args = p0.toPlaceholderArgs()
+        return p0.toTracker(model(args))?.let {
+            it.update(
+                TrackerUpdateAction.togglePart(v(args)),
+                predicate(args)
+            )
             SkillResult.SUCCESS
-        } ?: SkillResult.ERROR
+        } ?: SkillResult.CONDITION_FAILED
     }
 }

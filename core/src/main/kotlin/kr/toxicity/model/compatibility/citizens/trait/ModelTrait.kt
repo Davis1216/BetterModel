@@ -1,8 +1,8 @@
 package kr.toxicity.model.compatibility.citizens.trait
 
-import kr.toxicity.model.api.data.renderer.BlueprintRenderer
-import kr.toxicity.model.api.tracker.EntityTracker
-import kr.toxicity.model.manager.ModelManagerImpl
+import kr.toxicity.model.api.BetterModel
+import kr.toxicity.model.api.data.renderer.ModelRenderer
+import kr.toxicity.model.api.tracker.EntityTrackerRegistry
 import net.citizensnpcs.api.event.DespawnReason
 import net.citizensnpcs.api.trait.Trait
 import net.citizensnpcs.api.trait.TraitName
@@ -11,22 +11,19 @@ import net.citizensnpcs.api.util.RemoveReason
 
 @TraitName("model")
 class ModelTrait : Trait("model") {
-    private var _renderer: BlueprintRenderer? = null
+    private var _renderer: ModelRenderer? = null
     var renderer
         get() = _renderer
         set(value) {
             npc.entity?.let {
-                EntityTracker.tracker(it.uniqueId)?.close()
-                value?.create(it)?.apply {
-                    spawnNearby(npc.storedLocation)
-                }
+                value?.create(it) ?: EntityTrackerRegistry.registry(it.uniqueId)?.close()
             }
             _renderer = value
         }
 
     override fun load(key: DataKey) {
         key.getString("")?.let {
-            ModelManagerImpl.renderer(it)?.let { model ->
+            BetterModel.modelOrNull(it)?.let { model ->
                 renderer = model
             }
         }
@@ -34,7 +31,7 @@ class ModelTrait : Trait("model") {
 
     override fun save(key: DataKey) {
         npc.entity?.uniqueId?.let { uuid ->
-            EntityTracker.tracker(uuid)?.name()?.let {
+            EntityTrackerRegistry.registry(uuid)?.first()?.name()?.let {
                 key.setString("", it)
             }
         }
@@ -42,10 +39,8 @@ class ModelTrait : Trait("model") {
 
     override fun onSpawn() {
         npc.entity?.let {
-            if (EntityTracker.tracker(it.uniqueId) == null) {
-                renderer?.create(it)?.apply {
-                    spawnNearby(npc.storedLocation)
-                }
+            if (EntityTrackerRegistry.registry(it.uniqueId) == null) {
+                renderer?.create(it)
             }
         }
     }
@@ -56,7 +51,7 @@ class ModelTrait : Trait("model") {
 
     override fun onDespawn() {
         npc?.entity?.uniqueId?.let {
-            EntityTracker.tracker(it)?.close()
+            EntityTrackerRegistry.registry(it)?.close()
         }
     }
 
@@ -66,7 +61,7 @@ class ModelTrait : Trait("model") {
 
     override fun onRemove() {
         npc?.entity?.uniqueId?.let {
-            EntityTracker.tracker(it)?.close()
+            EntityTrackerRegistry.registry(it)?.close()
         }
     }
 

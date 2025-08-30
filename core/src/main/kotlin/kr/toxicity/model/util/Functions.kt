@@ -1,3 +1,11 @@
 package kr.toxicity.model.util
 
-fun <T> T?.ifNull(message: String): T & Any = this ?: throw RuntimeException(message)
+import kr.toxicity.model.api.bone.BoneTagRegistry
+import java.text.DecimalFormat
+
+val COMMA_FORMAT = DecimalFormat("#,###")
+
+inline fun <T> T?.ifNull(lazyMessage: () -> String): T & Any = this ?: throw RuntimeException(lazyMessage())
+
+fun Number.withComma(): String = COMMA_FORMAT.format(this)
+val String.boneName get() = BoneTagRegistry.parse(this)

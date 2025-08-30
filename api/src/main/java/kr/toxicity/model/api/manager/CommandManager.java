@@ -1,4 +1,7 @@
 package kr.toxicity.model.api.manager;
 
-public interface CommandManager extends GlobalManager {
+/**
+ * Command manager
+ */
+public interface CommandManager {
 }

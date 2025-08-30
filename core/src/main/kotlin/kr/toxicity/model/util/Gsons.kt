@@ -1,31 +1,62 @@
 package kr.toxicity.model.util
 
+import com.google.gson.JsonArray
 import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
 import kr.toxicity.model.api.data.blueprint.ModelBlueprint
 import kr.toxicity.model.api.data.raw.ModelData
-import kr.toxicity.model.api.player.PlayerLimb
 import java.io.File
-import java.io.InputStream
 
-fun File.toModel(): ModelBlueprint = bufferedReader().use {
-    ModelBlueprint.from(nameWithoutExtension, ModelData.GSON.fromJson(it, ModelData::class.java))
-}
-fun InputStream.toModel(name: String = "unknown"): ModelBlueprint = bufferedReader().use {
-    ModelBlueprint.from(name, ModelData.GSON.fromJson(it, ModelData::class.java))
+fun File.toTexturedModel(): ModelBlueprint? = bufferedReader().use {
+    ModelData.GSON.fromJson(it, ModelData::class.java)
+        .takeIf(ModelData::isSupported)
+        ?.toBlueprint(nameWithoutExtension.toPackName())
 }
 
-fun JsonElement.save(file: File) {
-    file.bufferedWriter().use {
-        ModelData.GSON.toJson(this, it)
+fun JsonElement.toByteArray(): ByteArray {
+    return ModelData.GSON.toJson(this).toByteArray(Charsets.UTF_8)
+}
+
+fun buildJsonArray(capacity: Int = 10, block: JsonArray.() -> Unit) = JsonArray(capacity).apply(block)
+fun buildJsonObject(block: JsonObject.() -> Unit) = JsonObject().apply(block)
+
+fun jsonArrayOf(vararg element: Any?) = buildJsonArray {
+    element.filterNotNull().forEach {
+        add(it.toJsonElement())
     }
 }
 
-fun String.toLimb() = runCatching {
-    PlayerLimb.valueOf(uppercase())
-}.getOrNull()
+fun jsonObjectOf(vararg element: Pair<String, Any>) = buildJsonObject {
+    element.forEach {
+        add(it.first, it.second.toJsonElement())
+    }
+}
 
-fun JsonElement.toByteArray(): ByteArray {
-    val sb = StringBuilder()
-    ModelData.GSON.toJson(this, sb)
-    return sb.toString().toByteArray(Charsets.UTF_8)
+operator fun JsonArray.plusAssign(other: JsonElement) {
+    add(other)
+}
+
+fun Any.toJsonElement(): JsonElement = when (this) {
+    is String -> JsonPrimitive(this)
+    is Char -> JsonPrimitive(this)
+    is Number -> JsonPrimitive(this)
+    is Boolean -> JsonPrimitive(this)
+    is JsonElement -> this
+    is List<*> -> run {
+        val map = mapNotNull {
+            it?.toJsonElement()
+        }
+        buildJsonArray(map.size) {
+            map.forEach {
+                add(it)
+            }
+        }
+    }
+    is Map<*, *> -> buildJsonObject {
+        forEach {
+            add(it.key?.toString() ?: return@forEach, it.value?.toJsonElement() ?: return@forEach)
+        }
+    }
+    else -> throw RuntimeException("Unsupported type: ${javaClass.name}")
 }

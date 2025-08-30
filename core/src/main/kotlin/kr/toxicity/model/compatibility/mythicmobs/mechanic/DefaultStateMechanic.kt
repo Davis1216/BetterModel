@@ -4,23 +4,31 @@ import io.lumine.mythic.api.config.MythicLineConfig
 import io.lumine.mythic.api.skills.INoTargetSkill
 import io.lumine.mythic.api.skills.SkillMetadata
 import io.lumine.mythic.api.skills.SkillResult
-import io.lumine.mythic.bukkit.MythicBukkit
-import io.lumine.mythic.core.skills.SkillMechanic
-import kr.toxicity.model.api.tracker.EntityTracker
+import kr.toxicity.model.api.animation.AnimationModifier
+import kr.toxicity.model.api.util.function.FloatConstantSupplier
+import kr.toxicity.model.compatibility.mythicmobs.*
 
-class DefaultStateMechanic(mlc: MythicLineConfig) : SkillMechanic(MythicBukkit.inst().skillManager, null, "[BetterModel]", mlc), INoTargetSkill {
+class DefaultStateMechanic(mlc: MythicLineConfig) : AbstractSkillMechanic(mlc), INoTargetSkill {
 
-    private val t = mlc.getString(arrayOf("t", "type"))!!
-    private val s = mlc.getString(arrayOf("state", "s"))!!
-
-    init {
-        isAsyncSafe = false
-    }
+    private val model = mlc.modelPlaceholder
+    private val type = mlc.toPlaceholderString(arrayOf("t", "type"))
+    private val state = mlc.toPlaceholderString(arrayOf("state", "s"))
+    private val li = mlc.toNullablePlaceholderInteger(arrayOf("li"))
+    private val lo = mlc.toNullablePlaceholderInteger(arrayOf("lo"))
+    private val sp = mlc.toNullablePlaceholderFloat(arrayOf("speed", "sp"))
 
     override fun cast(p0: SkillMetadata): SkillResult {
-        return EntityTracker.tracker(p0.caster.entity.bukkitEntity)?.let {
-            it.replaceLoop(t, s)
+        val args = p0.toPlaceholderArgs()
+        return p0.toTracker(model(args))?.let {
+            val t = type(args)
+            val s = state(args)
+            if (t == null) return SkillResult.CONDITION_FAILED
+            it.replace(t, s ?: t, AnimationModifier.builder()
+                .start(li(args) ?: -1)
+                .end(lo(args) ?: -1)
+                .speed(sp(args)?.let(FloatConstantSupplier::of))
+                .build())
             SkillResult.SUCCESS
-        } ?: SkillResult.ERROR
+        } ?: SkillResult.CONDITION_FAILED
     }
 }

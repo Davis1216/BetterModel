@@ -1,124 +1,127 @@
 package kr.toxicity.model.nms.v1_20_R4
 
-import com.google.common.collect.ImmutableList
-import com.google.gson.JsonParser
-import com.mojang.datafixers.util.Pair
+import com.mojang.authlib.GameProfile
 import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPromise
+import io.papermc.paper.chunk.system.entity.EntityLookup
 import kr.toxicity.model.api.BetterModel
+import kr.toxicity.model.api.bone.RenderedBone
 import kr.toxicity.model.api.data.blueprint.NamedBoundingBox
+import kr.toxicity.model.api.mount.MountController
 import kr.toxicity.model.api.nms.*
-import kr.toxicity.model.api.tracker.EntityTracker
+import kr.toxicity.model.api.tracker.EntityTrackerRegistry
+import net.kyori.adventure.key.Keyed
+import net.minecraft.core.NonNullList
+import net.minecraft.core.component.DataComponents
 import net.minecraft.network.Connection
-import net.minecraft.network.PacketListener
 import net.minecraft.network.protocol.Packet
 import net.minecraft.network.protocol.game.*
-import net.minecraft.network.syncher.EntityDataAccessor
+import net.minecraft.network.syncher.EntityDataSerializers
+import net.minecraft.network.syncher.SynchedEntityData
 import net.minecraft.server.MinecraftServer
+import net.minecraft.server.level.ServerLevel
+import net.minecraft.server.level.ServerPlayer
 import net.minecraft.server.network.ServerCommonPacketListenerImpl
+import net.minecraft.world.effect.MobEffects
 import net.minecraft.world.entity.Display
 import net.minecraft.world.entity.Display.ItemDisplay
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityType
-import net.minecraft.world.entity.EquipmentSlot
+import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.ai.attributes.Attributes
 import net.minecraft.world.item.ItemDisplayContext
 import net.minecraft.world.item.Items
+import net.minecraft.world.item.component.ResolvableProfile
+import net.minecraft.world.level.entity.LevelEntityGetter
+import net.minecraft.world.level.entity.LevelEntityGetterAdapter
+import net.minecraft.world.level.entity.PersistentEntitySectionManager
 import org.bukkit.Color
 import org.bukkit.Location
+import org.bukkit.OfflinePlayer
+import org.bukkit.craftbukkit.CraftOfflinePlayer
 import org.bukkit.craftbukkit.CraftWorld
 import org.bukkit.craftbukkit.entity.CraftEntity
-import org.bukkit.craftbukkit.entity.CraftLivingEntity
 import org.bukkit.craftbukkit.entity.CraftPlayer
-import org.bukkit.craftbukkit.inventory.CraftItemStack
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.FIRSTPERSON_LEFTHAND
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.FIRSTPERSON_RIGHTHAND
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.FIXED
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.GROUND
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.GUI
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.NONE
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.THIRDPERSON_LEFTHAND
-import org.bukkit.entity.ItemDisplay.ItemDisplayTransform.THIRDPERSON_RIGHTHAND
-import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
-import org.bukkit.inventory.EquipmentSlot.*
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.meta.LeatherArmorMeta
-import org.bukkit.util.Transformation
 import org.joml.Vector3f
-import java.lang.reflect.Field
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
+import java.util.function.Consumer
 
 class NMSImpl : NMS {
 
     companion object {
         private const val INJECT_NAME = "bettermodel_channel_handler"
+
         //Spigot
-        private val getConnection: (ServerCommonPacketListenerImpl) -> Connection = if (BetterModel.IS_PAPER) {
-            {
-                it.connection
-            }
-        } else {
-            ServerCommonPacketListenerImpl::class.java.declaredFields.first { f ->
-                f.type == Connection::class.java
-            }.apply {
-                isAccessible = true
-            }.let { get ->
-                {
-                    get[it] as Connection
+        private val getGameProfile: (net.minecraft.world.entity.player.Player) -> GameProfile = createAdaptedFieldGetter { it.gameProfile }
+        private val getOfflineGameProfile: (CraftOfflinePlayer) -> GameProfile = createAdaptedFieldGetter()
+        private val getConnection: (ServerCommonPacketListenerImpl) -> Connection = createAdaptedFieldGetter { it.connection }
+        private val spigotChunkAccess = ServerLevel::class.java.fields.firstOrNull {
+            it.type == PersistentEntitySectionManager::class.java
+        }?.apply {
+            isAccessible = true
+        }
+        @Suppress("UNCHECKED_CAST")
+        private val ServerLevel.levelGetter
+            get(): LevelEntityGetter<Entity> {
+                return if (BetterModel.IS_PAPER) {
+                    entityLookup
+                } else {
+                    spigotChunkAccess?.get(this)?.let {
+                        (it as PersistentEntitySectionManager<*>).entityGetter as LevelEntityGetter<Entity>
+                    } ?: throw RuntimeException("LevelEntityGetter")
                 }
             }
+        private val getEntityById: (LevelEntityGetter<Entity>, Int) -> Entity? = if (BetterModel.IS_PAPER)  { g, i ->
+            (g as EntityLookup)[i]
+        } else LevelEntityGetterAdapter::class.java.declaredFields.first {
+            net.minecraft.world.level.entity.EntityLookup::class.java.isAssignableFrom(it.type)
+        }.let {
+            it.isAccessible = true
+            { e, i ->
+                (it[e] as net.minecraft.world.level.entity.EntityLookup<*>).getEntity(i) as? Entity
+            }
         }
-        private fun Int.toEntity() = MinecraftServer.getServer().allLevels.firstNotNullOfOrNull {
-            it.entityLookup[this]
-        }
+        private fun Int.toEntity(level: ServerLevel) = getEntityById(level.levelGetter, this)
         //Spigot
-
-        private fun Class<*>.serializers() = declaredFields.filter { f ->
-            EntityDataAccessor::class.java.isAssignableFrom(f.type)
-        }
-
-        private fun Field.toSerializerId() = run {
-            isAccessible = true
-            (get(null) as EntityDataAccessor<*>).id
-        }
-
-        private val transformSet = Display::class.java.serializers().subList(0, 6).map { e ->
-            e.toSerializerId()
-        }.toSet() + ItemDisplay::class.java.serializers().first().toSerializerId()
-    }
-
-    private class PacketBundlerImpl(
-        private val list: MutableList<Packet<in ClientGamePacketListener>>
-    ) : PacketBundler, MutableList<Packet<in ClientGamePacketListener>> by list {
-        override fun send(player: Player) {
-            if (isNotEmpty()) (player as CraftPlayer).handle.connection.send(ClientboundBundlePacket(this))
+        private val hitBoxData = ItemDisplay(EntityType.ITEM_DISPLAY, MinecraftServer.getServer().overworld()).run {
+            entityData[Display.DATA_POS_ROT_INTERPOLATION_DURATION_ID] = 3
+            entityData.nonDefaultValues!!
         }
     }
 
-    override fun hide(player: Player, entity: org.bukkit.entity.Entity) {
-        val handle = (entity as CraftEntity).handle
-        val inv = handle.isInvisible
-        handle.isInvisible = true
-        (player as CraftPlayer).handle.connection.send(ClientboundBundlePacket(listOf(
-            ClientboundSetEquipmentPacket(handle.id, EquipmentSlot.entries.map { e ->
-                Pair.of(e, Items.AIR.defaultInstance)
-            }),
-            ClientboundSetEntityDataPacket(
-                handle.id,
-                handle.entityData.pack()
-            ))
-        ))
-        handle.isInvisible = inv
+    override fun hide(channel: PlayerChannelHandler, registry: EntityTrackerRegistry) {
+        val target = (registry.entity() as CraftEntity).vanillaEntity
+        val list = bundlerOf()
+        target.entityData.pack(
+            valueFilter = { it.id == SHARED_FLAG }
+        )?.let {
+            list += ClientboundSetEntityDataPacket(target.id, it).toRegistryDataPacket(channel.uuid(), registry)
+        }
+        if (target is LivingEntity) {
+            val packet = if (registry.hideOption(channel.uuid()).equipment) target.toEmptyEquipmentPacket() else target.toEquipmentPacket()
+            packet?.let { list += it }
+        }
+        list.send(channel.player())
     }
+    
+    private fun ClientboundSetEntityDataPacket.toRegistryDataPacket(uuid: UUID, registry: EntityTrackerRegistry) = ClientboundSetEntityDataPacket(id, packedItems().map {
+        if (it.id == SHARED_FLAG) SynchedEntityData.DataValue(
+            it.id,
+            EntityDataSerializers.BYTE,
+            registry.entityFlag(uuid, it.value() as Byte)
+        ) else it
+    })
 
     inner class PlayerChannelHandlerImpl(
         private val player: Player
     ) : PlayerChannelHandler, ChannelDuplexHandler() {
         private val connection = (player as CraftPlayer).handle.connection
-        private val entityUUIDMap = ConcurrentHashMap<UUID, EntityTracker>()
+        private val uuid = player.uniqueId
+        private val slim = BetterModel.plugin().skinManager().isSlim(profile())
 
         init {
             val pipeLine = getConnection(connection).channel.pipeline()
@@ -127,337 +130,281 @@ class NMSImpl : NMS {
             }
         }
 
-        private var showPlayerLimb = true
-        override fun showPlayerLimb(): Boolean = showPlayerLimb
-        override fun showPlayerLimb(show: Boolean) {
-            showPlayerLimb = show
-        }
-
+        override fun isSlim(): Boolean = slim
+        override fun id(): Int = connection.player.id
+        override fun uuid(): UUID = uuid
         override fun close() {
-            val channel = connection.connection.channel
+            val channel = getConnection(connection).channel
             channel.eventLoop().submit {
                 channel.pipeline().remove(INJECT_NAME)
             }
-            unregisterAll()
-        }
-
-        override fun unregisterAll() {
-            entityUUIDMap.values.toList().forEach {
-                it.remove(player)
-            }
         }
         override fun player(): Player = player
-        private fun send(packet: Packet<*>) = connection.send(packet)
+        private val playerModel get() = connection.player.id.toRegistry()
 
-        private fun Int.toTracker() = toEntity()?.let {
-            entityUUIDMap[it.uuid]
+        private fun Int.toPlayerEntity() = toEntity(connection.player.serverLevel())
+        private fun Entity.toRegistry() = EntityTrackerRegistry.registry(uuid)
+        private inline fun Int.toRegistry(
+            ifHitBox: (Entity) -> Unit = {}
+        ) = (EntityTrackerRegistry.registry(this) ?: toPlayerEntity()?.let {
+            if (it is HitBox) ifHitBox(it)
+            it.toRegistry()
+        })?.takeIf {
+            it.isSpawned(player)
         }
 
-        override fun startTrack(tracker: EntityTracker) {
-            val entity = (tracker.entity as CraftEntity).handle
-            entityUUIDMap.computeIfAbsent(entity.uuid) {
-                tracker
+        override fun sendEntityData(registry: EntityTrackerRegistry) {
+            val handle = registry.adapter().handle() as Entity
+            val list = bundlerOf(
+                ClientboundSetPassengersPacket(handle)
+            )
+            handle.entityData.pack(
+                valueFilter = { it.id == SHARED_FLAG }
+            )?.let {
+                list += ClientboundSetEntityDataPacket(handle.id, it)
             }
-        }
-
-        override fun endTrack(tracker: EntityTracker) {
-            val e = tracker.entity
-            val handle = (e as CraftEntity).handle
-            entityUUIDMap.remove(handle.uuid)
-            send(ClientboundSetEntityDataPacket(handle.id, handle.entityData.pack()))
-            if (e is LivingEntity) {
-                e.equipment?.let { i ->
-                    send(ClientboundSetEquipmentPacket(handle.id, org.bukkit.inventory.EquipmentSlot.entries.mapNotNull {
-                        it to (runCatching {
-                            i.getItem(it)
-                        }.getOrNull() ?: return@mapNotNull null)
-                    }.map { (type, item) ->
-                        Pair.of(when (type) {
-                            HAND -> EquipmentSlot.MAINHAND
-                            OFF_HAND -> EquipmentSlot.OFFHAND
-                            FEET -> EquipmentSlot.FEET
-                            LEGS -> EquipmentSlot.LEGS
-                            CHEST -> EquipmentSlot.CHEST
-                            HEAD -> EquipmentSlot.HEAD
-                            BODY -> EquipmentSlot.BODY
-                        }, CraftItemStack.asNMSCopy(item))
-                    }))
-                }
+            if (handle is LivingEntity) handle.toEquipmentPacket()?.let {
+                list += it
             }
-            send(ClientboundSetPassengersPacket(handle))
+            list.send(player)
         }
 
-        private fun <T : PacketListener> Packet<T>.handle(): Packet<T>? {
+        private fun <T : ClientGamePacketListener> Packet<in T>.handle(): Packet<in T>? {
             when (this) {
+                is ClientboundBundlePacket -> return if (subPackets() is Keyed) this else ClientboundBundlePacket(subPackets().mapNotNull {
+                    it.handle()
+                })
                 is ClientboundAddEntityPacket -> {
-                    id.toEntity()?.let { e ->
-                        if (entityUUIDMap[e.uuid] != null) return this
-                        BetterModel.inst().scheduler().task(e.bukkitEntity.location) {
-                            EntityTracker.tracker(e.bukkitEntity)?.let {
-                                if (it.autoSpawn()) it.spawn(player)
-                            }
-                        }
-                    }
-                }
-                is ClientboundTeleportEntityPacket -> {
-                    id.toTracker()?.let {
-                        if (it.world() == player.world.uid) {
-                            PacketBundlerImpl(mutableListOf()).run {
-                                mount(it, this)
-                                send(player)
-                            }
-                        } else {
-                            it.remove()
+                    val entity = id.toPlayerEntity() ?: return this
+                    if (entity is HitBox) return entity.toFakeAddPacket()
+                    BetterModel.registry(entity.bukkitEntity).ifPresent {
+                        BetterModel.plugin().scheduler().taskLater(entity.bukkitEntity, 1) {
+                            it.spawn(player)
                         }
                     }
                 }
                 is ClientboundRemoveEntitiesPacket -> {
                     entityIds
                         .asSequence()
-                        .mapNotNull {
-                            it.toTracker()
+                        .mapNotNull map@ {
+                            it.toRegistry {
+                                return@map null
+                            }
                         }
                         .forEach {
                             it.remove()
                         }
                 }
-                is ClientboundSetEntityDataPacket -> if (id.toTracker() != null) return null
-                is ClientboundSetEquipmentPacket -> if (entity.toTracker() != null) return null
+                is ClientboundSetPassengersPacket -> {
+                    vehicle.toRegistry()?.let {
+                        return it.mountPacket(array = passengers)
+                    }
+                }
+                is ClientboundUpdateAttributesPacket if entityId.toPlayerEntity() is HitBox -> return null
+                is ClientboundSetEntityDataPacket -> id.toRegistry {
+                    return ClientboundSetEntityDataPacket(id, hitBoxData)
+                }?.let { registry ->
+                    return toRegistryDataPacket(uuid, registry)
+                }
+                is ClientboundSetEquipmentPacket -> entity.toRegistry {
+                    return null
+                }?.let {
+                    if (it.hideOption(uuid).equipment()) (it.adapter().handle() as? LivingEntity)?.toEmptyEquipmentPacket()?.let { packet ->
+                        return packet
+                    }
+                } 
+                is ClientboundRespawnPacket -> playerModel?.let {
+                    bundlerOf(it.mountPacket()).send(player)
+                }
+                is ClientboundContainerSetSlotPacket if isEquipment(connection.player) && playerModel?.hideOption(uuid)?.equipment() == true -> {
+                    return ClientboundContainerSetSlotPacket(containerId, stateId, slot, EMPTY_ITEM)
+                }
+                is ClientboundContainerSetContentPacket if containerId == 0 && playerModel?.hideOption(uuid)?.equipment() == true -> {
+                    return ClientboundContainerSetContentPacket(
+                        containerId,
+                        stateId,
+                        (items as NonNullList<net.minecraft.world.item.ItemStack>).apply {
+                            PLAYER_EQUIPMENT_SLOT.forEach { set(it, EMPTY_ITEM) }
+                            set(connection.player.hotbarSlot, EMPTY_ITEM)
+                        },
+                        carriedItem
+                    )
+                }
             }
             return this
         }
 
         override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
-            if (msg is ClientboundBundlePacket) {
-                super.write(ctx, ClientboundBundlePacket(msg.subPackets().mapNotNull {
-                    it.handle()
-                }), promise)
-                return
-            } else if (msg is Packet<*>) {
-                super.write(ctx, msg.handle() ?: return, promise)
-                return
-            }
-            super.write(ctx, msg, promise)
+            super.write(ctx, if (msg is Packet<*>) msg.handle() ?: return else msg, promise)
         }
 
         override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
+            fun EntityTrackerRegistry.updatePlayerLimb() = BetterModel.plugin().scheduler().asyncTaskLater(1) {
+                if (isClosed) return@asyncTaskLater
+                player.updateInventory()
+                trackers().forEach { tracker ->
+                    tracker.updateDisplay { bone ->
+                        !bone.itemMapper.fixed()
+                    }
+                }
+            }
             when (msg) {
                 is ServerboundSetCarriedItemPacket -> {
-                    if (connection.player.id.toTracker() != null) {
-                        connection.send(ClientboundSetCarriedItemPacket(player.inventory.heldItemSlot))
-                        return
+                    playerModel?.let { registry ->
+                        if (!registry.hideOption(uuid).equipment()) return super.channelRead(ctx, msg)
+                        if (CONFIG.cancelPlayerModelInventory()) {
+                            connection.send(ClientboundSetCarriedItemPacket(player.inventory.heldItemSlot))
+                            return
+                        }
+                        registry.updatePlayerLimb()
                     }
                 }
                 is ServerboundPlayerActionPacket -> {
-                    if (connection.player.id.toTracker() != null) return
+                    playerModel?.let { registry ->
+                        if (!registry.hideOption(uuid).equipment()) return super.channelRead(ctx, msg)
+                        if (CONFIG.cancelPlayerModelInventory()) return
+                        registry.updatePlayerLimb()
+                    }
                 }
             }
             super.channelRead(ctx, msg)
         }
 
-        private fun EntityTracker.remove() {
+        private fun EntityTrackerRegistry.remove() {
             remove(player)
         }
     }
 
-    override fun mount(tracker: EntityTracker, bundler: PacketBundler) {
-        val entity = (tracker.entity as CraftEntity).handle
-        val map = tracker.renderers().mapNotNull {
-            (it as? ModelDisplayImpl)?.display
+    override fun mount(registry: EntityTrackerRegistry, bundler: PacketBundler) {
+        bundler += registry.mountPacket()
+    }
+
+    private fun EntityTrackerRegistry.mountPacket(entity: Entity = adapter().handle() as Entity, array: IntArray = entity.passengers.filter {
+        EntityTrackerRegistry.registry(it.uuid) == null
+    }.map {
+        it.id
+    }.toIntArray()): ClientboundSetPassengersPacket {
+        return useByteBuf { buffer ->
+            buffer.writeVarInt(entity.id)
+            buffer.writeVarIntArray(displays()
+                .mapToInt { 
+                    (it as ModelDisplayImpl).display.id 
+                }.toArray() + array)
+            ClientboundSetPassengersPacket.STREAM_CODEC.decode(buffer)
         }
-        entity.passengers = ImmutableList.builder<Entity>()
-            .addAll(map)
-            .addAll(entity.passengers.filter { e ->
-                e.valid
-            })
-            .build()
-        val packet = ClientboundSetPassengersPacket(entity)
-        (bundler as PacketBundlerImpl).add(packet)
     }
 
     override fun inject(player: Player): PlayerChannelHandlerImpl = PlayerChannelHandlerImpl(player)
 
-    override fun createBundler(): PacketBundler = PacketBundlerImpl(mutableListOf())
-    private fun PacketBundler.unwrap(): PacketBundlerImpl = this as PacketBundlerImpl
+    override fun createBundler(initialCapacity: Int): PacketBundler = bundlerOf(initialCapacity)
+    override fun createLazyBundler(): PacketBundler = lazyBundlerOf()
+    override fun createParallelBundler(threshold: Int): PacketBundler = parallelBundlerOf(threshold)
 
-    override fun create(location: Location): ModelDisplay = ModelDisplayImpl(ItemDisplay(EntityType.ITEM_DISPLAY, (location.world as CraftWorld).handle).apply {
+    override fun create(location: Location, yOffset: Double, initialConsumer: Consumer<ModelDisplay>): ModelDisplay = ModelDisplayImpl(ItemDisplay(EntityType.ITEM_DISPLAY, (location.world as CraftWorld).handle).apply {
         billboardConstraints = Display.BillboardConstraints.FIXED
+        valid = true
         moveTo(
             location.x,
             location.y,
             location.z,
-            0F,
+            location.yaw,
             0F
         )
-        valid = true
-        persist = false
         itemTransform = ItemDisplayContext.FIXED
-        transformationInterpolationDelay = -1
-        entityData.set(Display.DATA_POS_ROT_INTERPOLATION_DURATION_ID, 1)
-    })
-
-    private inner class ModelDisplayImpl(
-        val display: ItemDisplay
-    ) : ModelDisplay {
-        override fun close() {
-            display.valid = false
-        }
-
-        override fun display(transform: org.bukkit.entity.ItemDisplay.ItemDisplayTransform) {
-            display.itemTransform = when (transform) {
-                NONE -> ItemDisplayContext.NONE
-                THIRDPERSON_LEFTHAND -> ItemDisplayContext.THIRD_PERSON_LEFT_HAND
-                THIRDPERSON_RIGHTHAND -> ItemDisplayContext.THIRD_PERSON_RIGHT_HAND
-                FIRSTPERSON_LEFTHAND -> ItemDisplayContext.FIRST_PERSON_LEFT_HAND
-                FIRSTPERSON_RIGHTHAND -> ItemDisplayContext.FIRST_PERSON_RIGHT_HAND
-                org.bukkit.entity.ItemDisplay.ItemDisplayTransform.HEAD -> ItemDisplayContext.HEAD
-                GUI -> ItemDisplayContext.GUI
-                GROUND -> ItemDisplayContext.GROUND
-                FIXED -> ItemDisplayContext.FIXED
-            }
-        }
-
-        override fun spawn(bundler: PacketBundler) {
-            bundler.unwrap().add(addPacket)
-            val f = display.transformationInterpolationDuration
-            frame(0)
-            bundler.unwrap().add(ClientboundSetEntityDataPacket(display.id, display.entityData.pack()))
-            frame(f)
-        }
-
-        override fun frame(frame: Int) {
-            display.transformationInterpolationDuration = frame
-        }
-
-        override fun remove(bundler: PacketBundler) {
-            bundler.unwrap().add(removePacket)
-        }
-
-        override fun teleport(location: Location, bundler: PacketBundler) {
-            display.moveTo(
-                location.x,
-                location.y,
-                location.z,
-                location.yaw,
-                0F
-            )
-            bundler.unwrap().add(ClientboundTeleportEntityPacket(display))
-        }
-        override fun item(itemStack: ItemStack) {
-            display.itemStack = CraftItemStack.asNMSCopy(itemStack)
-        }
-
-        override fun transform(transformation: Transformation) {
-            display.setTransformation(com.mojang.math.Transformation(
-                transformation.translation,
-                transformation.leftRotation,
-                transformation.scale,
-                transformation.rightRotation
-            ))
-        }
-
-        override fun send(bundler: PacketBundler) {
-            bundler.unwrap().add(dataPacket)
-        }
-
-        private val dataPacket
-            get(): ClientboundSetEntityDataPacket {
-                val result = ClientboundSetEntityDataPacket(display.id, display.entityData.pack().filter {
-                    transformSet.contains(it.id)
-                })
-                return result
-            }
-
-
-        private val removePacket
-            get() = ClientboundRemoveEntitiesPacket(display.id)
-
-        private val addPacket
-            get() = ClientboundAddEntityPacket(
-                display.id,
-                display.uuid,
-                display.x,
-                display.y,
-                display.z,
-                display.xRot,
-                display.yRot,
-                display.type,
-                0,
-                display.deltaMovement,
-                display.yHeadRot.toDouble()
-            )
+        entityData[Display.DATA_POS_ROT_INTERPOLATION_DURATION_ID] = 3
+    }, yOffset).apply {
+        initialConsumer.accept(this)
+        display.entityData.packDirty()
     }
 
-    override fun tint(itemStack: ItemStack, toggle: Boolean): ItemStack {
-        val meta = itemStack.itemMeta
+    override fun createNametag(bone: RenderedBone): ModelNametag = ModelNametagImpl(bone)
+
+    override fun tint(itemStack: ItemStack, rgb: Int): ItemStack = itemStack.clone().apply {
+        val meta = itemMeta
         if (meta is LeatherArmorMeta) {
-            itemStack.itemMeta = meta.apply {
-                setColor(if (toggle) Color.fromRGB(0xFF8060) else Color.WHITE)
+            itemMeta = meta.apply {
+                setColor(Color.fromRGB(rgb))
             }
         }
-        return itemStack
     }
 
-    override fun createHitBox(entity: org.bukkit.entity.Entity, supplier: TransformSupplier, namedBoundingBox: NamedBoundingBox, listener: HitBoxListener): HitBox {
-        val handle = (entity as CraftLivingEntity).handle
-        val scale = adapt(entity).scale()
-        val newBox = namedBoundingBox.center() * scale
-        val height = newBox.length() / 2
+    override fun createHitBox(entity: EntityAdapter, bone: RenderedBone, namedBoundingBox: NamedBoundingBox, mountController: MountController, listener: HitBoxListener): HitBox? {
+        val handle = entity.handle() as? Entity ?: return null
+        val newBox = namedBoundingBox.center()
         return HitBoxImpl(
             namedBoundingBox.name,
             newBox,
-            supplier,
+            bone,
             listener,
-            handle
-        ).apply {
-            attributes.getInstance(Attributes.SCALE)!!.baseValue = height / 0.52
-            refreshDimensions()
-            handle.level().addFreshEntity(this)
-        }
+            handle,
+            mountController
+        ).craftEntity
     }
 
     override fun version(): NMSVersion = NMSVersion.V1_20_R4
 
-    override fun adapt(entity: LivingEntity): EntityAdapter {
-        val handle = (entity as CraftLivingEntity).handle
+    override fun adapt(entity: org.bukkit.entity.Entity): EntityAdapter {
+        entity as CraftEntity
         return object : EntityAdapter {
+
+            override fun entity(): org.bukkit.entity.Entity = entity
+            override fun customName(): AdventureComponent? = handle().run {
+                if (this is ServerPlayer) (customName ?: name).asAdventure() else customName?.asAdventure()?.takeIf { 
+                    isCustomNameVisible
+                }
+            }
+            override fun handle(): Entity = entity.vanillaEntity
+            override fun id(): Int = handle().id
+            override fun dead(): Boolean = (handle() as? LivingEntity)?.isDeadOrDying == true || handle().removalReason != null || !handle().valid
+            override fun invisible(): Boolean = handle().isInvisible || (handle() as? LivingEntity)?.hasEffect(MobEffects.INVISIBILITY) == true
+            override fun glow(): Boolean = handle().isCurrentlyGlowing
+
             override fun onWalk(): Boolean {
-                val delta = handle.deltaMovement.length()
-                val attribute = handle.attributes
-                return if (handle.onGround) delta / (attribute.getInstance(Attributes.MOVEMENT_SPEED)?.value ?: 0.7) > 0.4
-                else delta / (attribute.getInstance(Attributes.FLYING_SPEED)?.value ?: 0.4) > 0.1
+                return handle().isWalking()
             }
 
             override fun scale(): Double {
-                return handle.attributes.getInstance(Attributes.SCALE)?.value ?: 1.0
+                val handle = handle()
+                return if (handle is LivingEntity) handle.scale.toDouble() else 1.0
             }
 
-            override fun pitch(): Float {
-                return handle.xRot
+            override fun pitch(): Float = handle().xRot
+            override fun ground(): Boolean = handle().onGround()
+            override fun bodyYaw(): Float = handle().yRot
+            override fun headYaw(): Float = if (handle() is LivingEntity) handle().yHeadRot else bodyYaw()
+            override fun fly(): Boolean = handle().isFlying
+
+            override fun damageTick(): Float {
+                val handle = handle()
+                if (handle !is LivingEntity) return 0F
+                val duration = handle.invulnerableDuration.toFloat()
+                if (duration <= 0F) return 0F
+                val knockBack = 1 - (handle.getAttribute(Attributes.KNOCKBACK_RESISTANCE)?.value?.toFloat() ?: 0F)
+                return handle.invulnerableTime.toFloat() / duration * knockBack
             }
 
-            override fun bodyYaw(): Float {
-                return handle.visualRotationYInDegrees
-            }
-
-            override fun yaw(): Float {
-                return handle.bukkitYaw
+            override fun walkSpeed(): Float {
+                val handle = handle()
+                if (handle !is LivingEntity) return 0F
+                if (!handle.onGround) return 1F
+                val speed = handle.getEffect(MobEffects.MOVEMENT_SPEED)?.amplifier ?: 0
+                val slow = handle.getEffect(MobEffects.MOVEMENT_SLOWDOWN)?.amplifier ?: 0
+                return (1F + (speed - slow) * 0.2F)
+                    .coerceAtLeast(0.2F)
+                    .coerceAtMost(2F)
             }
 
             override fun passengerPosition(): Vector3f {
-                return handle.passengerPosition()
+                return handle().passengerPosition()
             }
         }
     }
+    
+    override fun profile(player: OfflinePlayer): GameProfile = if (player is CraftOfflinePlayer) getOfflineGameProfile(player) else getGameProfile((player as CraftPlayer).handle)
 
-    override fun isSlim(player: Player): Boolean {
-        val encodedValue = (player as CraftPlayer).handle.gameProfile.properties.get("textures").iterator().next().value
-        val decodedValue = String(Base64.getDecoder().decode(encodedValue))
-        val json = JsonParser.parseString(decodedValue).asJsonObject
-        val skinObject = json.getAsJsonObject("textures").getAsJsonObject("SKIN")
-        if(!skinObject.has("metadata")) return false
-        if(!skinObject.getAsJsonObject("metadata").has("model")) return false
-        val model = skinObject.getAsJsonObject("metadata").get("model").asString
-        return model == "slim"
-    }
+    override fun createPlayerHead(profile: GameProfile): ItemStack = VanillaItemStack(Items.PLAYER_HEAD).apply {
+        set(DataComponents.PROFILE, ResolvableProfile(profile))
+    }.asBukkit()
+
+    override fun isProxyOnlineMode(): Boolean = ONLINE_MODE
 }

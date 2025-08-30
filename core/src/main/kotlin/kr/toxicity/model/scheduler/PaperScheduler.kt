@@ -17,13 +17,21 @@ class PaperScheduler : ModelScheduler {
         }
     }
 
-    override fun task(location: Location, runnable: Runnable) = Bukkit.getRegionScheduler().run(PLUGIN, location) {
-        runnable.run()
-    }.wrap()
+    private fun ifEnabled(block: () -> ModelTask?): ModelTask? {
+        return if (PLUGIN.isEnabled) block() else null
+    }
 
-    override fun taskLater(delay: Long, location: Location, runnable: Runnable) = Bukkit.getRegionScheduler().runDelayed(PLUGIN, location, {
-        runnable.run()
-    }, delay).wrap()
+    override fun task(location: Location, runnable: Runnable): ModelTask? = ifEnabled {
+        Bukkit.getRegionScheduler().run(PLUGIN, location) {
+            runnable.run()
+        }.wrap()
+    }
+
+    override fun taskLater(location: Location, delay: Long, runnable: Runnable): ModelTask? = ifEnabled {
+        Bukkit.getRegionScheduler().runDelayed(PLUGIN, location, {
+            runnable.run()
+        }, delay).wrap()
+    }
 
     override fun asyncTask(runnable: Runnable) = Bukkit.getAsyncScheduler().runNow(PLUGIN) {
         runnable.run()
@@ -31,9 +39,9 @@ class PaperScheduler : ModelScheduler {
 
     override fun asyncTaskLater(delay: Long, runnable: Runnable) = Bukkit.getAsyncScheduler().runDelayed(PLUGIN, {
         runnable.run()
-    }, delay * 50, TimeUnit.MILLISECONDS).wrap()
+    }, (delay * 50).coerceAtLeast(1), TimeUnit.MILLISECONDS).wrap()
 
     override fun asyncTaskTimer(delay: Long, period: Long, runnable: Runnable) = Bukkit.getAsyncScheduler().runAtFixedRate(PLUGIN, {
         runnable.run()
-    }, delay * 50, period * 50, TimeUnit.MILLISECONDS).wrap()
+    }, (delay * 50).coerceAtLeast(1), (period * 50).coerceAtLeast(1), TimeUnit.MILLISECONDS).wrap()
 }

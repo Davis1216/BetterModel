@@ -2,132 +2,230 @@ package kr.toxicity.model.api.data.blueprint;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import kr.toxicity.model.api.BetterModel;
+import kr.toxicity.model.api.bone.BoneName;
 import kr.toxicity.model.api.data.raw.Float3;
-import kr.toxicity.model.api.data.raw.ModelChildren;
 import kr.toxicity.model.api.data.raw.ModelElement;
-import kr.toxicity.model.api.util.EntityUtil;
+import kr.toxicity.model.api.util.MathUtil;
+import kr.toxicity.model.api.util.PackUtil;
+import kr.toxicity.model.api.util.json.JsonObjectBuilder;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
+import org.joml.Quaternionf;
 
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
+import static kr.toxicity.model.api.util.CollectionUtil.*;
+
+/**
+ * A children of blueprint (group, element).
+ */
 public sealed interface BlueprintChildren {
 
-    static BlueprintChildren from(@NotNull ModelChildren children, @NotNull @Unmodifiable Map<UUID, ModelElement> elementMap, float scale) {
-        return switch (children) {
-            case ModelChildren.ModelGroup modelGroup -> new BlueprintGroup(
-                    modelGroup.name(),
-                    modelGroup.origin(),
-                    modelGroup.rotation(),
-                    modelGroup.children().stream().map(c -> from(c, elementMap, scale)).toList(),
-                    modelGroup.visibility()
-            );
-            case ModelChildren.ModelUUID modelUUID -> new BlueprintElement(Objects.requireNonNull(elementMap.get(modelUUID.uuid())), scale);
-        };
-    }
-
+    /**
+     * Blueprint group
+     * @param name group name
+     * @param origin origin
+     * @param rotation rotation
+     * @param children children
+     * @param visibility visibility
+     */
     record BlueprintGroup(
-            @NotNull String name,
+            @NotNull BoneName name,
             @NotNull Float3 origin,
             @NotNull Float3 rotation,
             @NotNull List<BlueprintChildren> children,
             boolean visibility
     ) implements BlueprintChildren {
 
-        public @NotNull String jsonName(@NotNull ModelBlueprint parent) {
-            return parent.name() + "_" + name;
+        private static final JsonArray MAX_SCALE_ARRAY = new JsonArray(3);
+
+        static {
+            MAX_SCALE_ARRAY.add(4);
+            MAX_SCALE_ARRAY.add(4);
+            MAX_SCALE_ARRAY.add(4);
         }
 
-        public BlueprintJson buildJson(
-                int tint,
+        /**
+         * Gets origin
+         * @return origin
+         */
+        @Override
+        @NotNull
+        public Float3 origin() {
+            return origin.invertXZ();
+        }
+
+        /**
+         * Gets JSON name of blueprint.
+         * @param parent parent
+         * @return name
+         */
+        public @NotNull String jsonName(@NotNull ModelBlueprint parent) {
+            return PackUtil.toPackName(parent.name() + "_" + name.rawName());
+        }
+
+        /**
+         * Gets blueprint legacy json
+         * @param skipLog skip log
+         * @param scale scale
+         * @param parent parent
+         * @return json
+         */
+        public @Nullable BlueprintJson buildLegacyJson(
+                boolean skipLog,
+                float scale,
                 @NotNull ModelBlueprint parent
         ) {
-            var object = new JsonObject();
-            var textureObject = new JsonObject();
-            var index = 0;
-            for (BlueprintTexture texture : parent.textures()) {
-                textureObject.addProperty(Integer.toString(index++), BetterModel.inst().configManager().namespace() + ":item/" + parent.name() + "_" + texture.name());
-            }
-            object.add("textures", textureObject);
-            var elements = new JsonArray();
-            for (BlueprintChildren child : children) {
-                if (child instanceof BlueprintElement element) {
-                    element.buildJson(tint, parent, this, elements);
-                }
-            }
-            if (elements.isEmpty()) return null;
-            object.add("elements", elements);
-            return new BlueprintJson(jsonName(parent), object);
+            Predicate<BlueprintElement> filter = element -> MathUtil.checkValidDegree(element.identifierDegree());
+            if (!skipLog) filter = filterWithWarning(
+                    filter,
+                    element -> "The model " + parent.name() + "'s cube \"" + element.element.name() + "\" has an invalid rotation which does not supported in legacy client (<=1.21.3) " + element.element.rotation()
+            );
+            return buildJson(-2, 1, scale, parent, Float3.ZERO, filterIsInstance(children, BlueprintElement.class).filter(filter));
         }
 
+        /**
+         * Gets blueprint modern json
+         * @param scale scale
+         * @param parent parent
+         * @return json
+         */
+        @Nullable
+        @Unmodifiable
+        public List<BlueprintJson> buildModernJson(
+                float scale,
+                @NotNull ModelBlueprint parent
+        ) {
+            var list = mapIndexed(
+                    group(
+                            filterIsInstance(children, BlueprintElement.class),
+                            BlueprintElement::identifierDegree
+                    ),
+                    (i, entry) -> buildJson(0, i + 1, scale, parent, entry.getKey(), entry.getValue().stream())
+            ).filter(Objects::nonNull)
+                    .toList();
+            return list.isEmpty() ? null : list;
+        }
+
+        private @Nullable BlueprintJson buildJson(
+                int tint,
+                int number,
+                float scale,
+                @NotNull ModelBlueprint parent,
+                @NotNull Float3 identifier,
+                @NotNull Stream<BlueprintElement> cubes
+        ) {
+            if (parent.textures().isEmpty()) return null;
+            var cubeElement = cubes
+                    .filter(c -> c.element.hasTexture())
+                    .toList();
+            if (cubeElement.isEmpty()) return null;
+            return new BlueprintJson(jsonName(parent) + "_" + number, JsonObjectBuilder.builder()
+                    .jsonObject("textures", textures -> {
+                        var index = 0;
+                        for (BlueprintTexture texture : parent.textures()) {
+                            textures.property(Integer.toString(index++), texture.packName(parent.name()));
+                        }
+                        textures.property("particle", parent.textures().getFirst().packName(parent.name()));
+                    })
+                    .jsonArray("elements", mapToJson(cubeElement, cube -> cube.buildJson(tint, scale, parent, this, identifier)))
+                    .jsonObject("display", display -> display.jsonObject("fixed", fixed -> {
+                        fixed.jsonArray("scale", MAX_SCALE_ARRAY);
+                        if (!identifier.equals(Float3.ZERO)) {
+                            fixed.jsonArray("rotation", identifier.convertToMinecraftDegree().toJson());
+                        }
+                    }))
+                    .build());
+        }
+
+        /**
+         * Gets single hit-box
+         * @return bounding box
+         */
         public @Nullable NamedBoundingBox hitBox() {
-            var elements = new ArrayList<ModelBoundingBox>();
-            for (BlueprintChildren child : children) {
-                if (child instanceof BlueprintElement element) {
-                    var model = element.element;
-                    var from = model.from()
-                            .minus(origin)
-                            .toVector()
-                            .div(16);
-                    var to = model.to()
-                            .minus(origin)
-                            .toVector()
-                            .div(16);
-                    elements.add(new ModelBoundingBox(
-                            from.x,
-                            from.y,
-                            from.z,
-                            to.x,
-                            to.y,
-                            to.z
-                    ));
-                }
-            }
-            var max = EntityUtil.max(elements);
-            return max != null ? new NamedBoundingBox(name, max) : null;
+            return filterIsInstance(children, BlueprintElement.class).map(be -> {
+                var element = be.element;
+                var from = element.from()
+                        .minus(origin)
+                        .toBlockScale()
+                        .toVector();
+                var to = element.to()
+                        .minus(origin)
+                        .toBlockScale()
+                        .toVector();
+                return ModelBoundingBox.of(
+                        from.x,
+                        from.y,
+                        from.z,
+                        to.x,
+                        to.y,
+                        to.z
+                ).invert();
+            }).max(Comparator.comparingDouble(ModelBoundingBox::length))
+                    .map(max -> new NamedBoundingBox(name, max))
+                    .orElse(null);
         }
     }
 
-    record BlueprintElement(@NotNull ModelElement element, float scale) implements BlueprintChildren {
-        private void buildJson(
+    /**
+     * Blueprint element.
+     * @param element raw element
+     */
+    record BlueprintElement(@NotNull ModelElement element) implements BlueprintChildren {
+
+        private @NotNull Float3 identifierDegree() {
+            return MathUtil.identifier(element.rotation());
+        }
+
+        private static @NotNull Float3 centralize(@NotNull Float3 target, @NotNull Float3 groupOrigin, float scale) {
+            return target.minus(groupOrigin).div(scale);
+        }
+
+        private static @NotNull Float3 deltaPosition(@NotNull Float3 target, @NotNull Quaternionf quaternionf) {
+            return target.rotate(quaternionf).minus(target);
+        }
+
+        private @NotNull JsonObject buildJson(
                 int tint,
+                float scale,
                 @NotNull ModelBlueprint parent,
                 @NotNull BlueprintGroup group,
-                @NotNull JsonArray targetArray
+                @NotNull Float3 identifier
         ) {
-            if (!element.hasTexture()) return;
-            var object = new JsonObject();
-            var origin = element.origin()
-                    .minus(group.origin)
-                    .div(scale)
-                    .plus(Float3.CENTER);
-            var inflate = new Float3(element.inflate(), element.inflate(), element.inflate()).div(scale);
-            object.add("from", element.from()
-                    .minus(group.origin)
-                    .div(scale)
-                    .plus(Float3.CENTER)
-                    .minus(origin)
-                    .minus(inflate)
-                    .plus(origin)
-                    .toJson());
-            object.add("to", element.to()
-                    .minus(group.origin)
-                    .div(scale)
-                    .plus(Float3.CENTER)
-                    .minus(origin)
-                    .plus(inflate)
-                    .plus(origin)
-                    .toJson());
-            var rot = element.rotation();
-            if (rot != null) {
-                var rotation = getRotation(rot);
-                rotation.add("origin", origin.toJson());
-                object.add("rotation", rotation);
-            }
-            object.add("faces", element.faces().toJson(parent.resolution(), tint));
-            targetArray.add(object);
+            var qua = MathUtil.toQuaternion(identifier.toVector()).invert();
+            var centerOrigin = centralize(element.origin(), group.origin, scale);
+            var groupDelta = deltaPosition(centerOrigin, qua);
+            var inflate = new Float3(element.inflate() / scale);
+            return JsonObjectBuilder.builder()
+                    .jsonArray("from", centralize(element.from(), group.origin, scale)
+                            .plus(groupDelta)
+                            .plus(Float3.CENTER)
+                            .minus(inflate)
+                            .toJson())
+                    .jsonArray("to", centralize(element.to(), group.origin, scale)
+                            .plus(groupDelta)
+                            .plus(Float3.CENTER)
+                            .plus(inflate)
+                            .toJson())
+                    .jsonObject("faces", Objects.requireNonNull(element.faces()).toJson(parent, tint))
+                    .jsonObject("rotation", Optional.of(element.rotation().minus(identifier))
+                            .filter(r -> !Float3.ZERO.equals(r))
+                            .map(rot -> {
+                                var rotation = getRotation(rot);
+                                rotation.add("origin", centerOrigin
+                                        .plus(groupDelta)
+                                        .plus(Float3.CENTER)
+                                        .toJson());
+                                return rotation;
+                            })
+                            .orElse(null))
+                    .build();
         }
 
         private @NotNull JsonObject getRotation(@NotNull Float3 rot) {
